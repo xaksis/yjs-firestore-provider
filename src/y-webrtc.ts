@@ -12,8 +12,8 @@ import * as random from 'lib0/random'
 
 
 import * as Y from 'yjs'; // eslint-disable-line
-// import Peer from 'simple-peer/simplepeer.min.js'
-import SimplePeer from "simple-peer"
+import SimplePeer from 'simple-peer/simplepeer.min.js';
+// import SimplePeer from "simple-peer"
 
 import * as awarenessProtocol from 'y-protocols/awareness'
 // import * as syncProtocol from 'y-protocols/sync'
