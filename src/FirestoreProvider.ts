@@ -23,6 +23,7 @@ import * as Y from "yjs";
 import { currentTime, timeSinceEpoch } from "./time";
 import { getTimePath } from "./y-common";
 import { FirestoreWebrtcProvider } from "./y-webrtc";
+import { yDocToProsemirrorJSON } from "y-prosemirror";
 
 const SHUTDOWN = "shutdown";
 const YJS_HISTORY_UPDATES = "/yjs/history/updates";
@@ -244,8 +245,11 @@ export class FirestoreProvider extends Observable<any> {
 
     const baselinePath = this.basePath + YJS_HISTORY;
     const baseRef = doc(db, baselinePath);
+    //* getting the history object from note.
     getDoc(baseRef)
       .then((baseDoc) => {
+        //* if history exists, apply update to ydoc. this will trigger ydoc's update.
+        //* updateHandler will then save the update in cache (will merge with current cache if it exists)
         if (baseDoc.exists()) {
           const bytes = baseDoc.data().update as Bytes;
           const update = bytes.toUint8Array();
@@ -253,6 +257,7 @@ export class FirestoreProvider extends Observable<any> {
         }
       })
       .then(() => {
+        //* here we're subscribing to updates collection within history. yjs/history/updates.
         self.unsubscribe = onSnapshot(
           q,
           (snapshot) => {
@@ -457,9 +462,16 @@ export class FirestoreProvider extends Observable<any> {
         time.toString(16);
 
       const db = getFirestore(this.firebaseApp);
+      const batch = writeBatch(db);
       const path = this.basePath + YJS_HISTORY_UPDATES;
       const docRef = doc(db, path, updateId);
-      await setDoc(docRef, data);
+      const fullDocRef = doc(db, this.basePath);
+      batch.set(docRef, data);
+      const fullDoc = yDocToProsemirrorJSON(this.doc, 'default');
+      batch.update(fullDocRef, {
+        content: JSON.stringify(fullDoc),
+      });
+      await batch.commit();
     }
   }
 }
