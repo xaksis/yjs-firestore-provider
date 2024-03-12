@@ -882,8 +882,13 @@ export class FirestoreSignalingConn {
         if (announceDoc.exists()) {
           const announceData = announceDoc.data();
           const payload = await this.decrypt(announceData.payload) as AnnounceData;
-          this.announceCreatedAt = payload.createdAt.toMillis();
-          this.announceUnsubscribe = this.subscribeAnnounce();
+          try {
+            this.announceCreatedAt = payload.createdAt.toMillis();
+            this.announceUnsubscribe = this.subscribeAnnounce();
+          } catch (e) {
+            console.log('Failed to get createdAt');
+            console.error(e);
+          }
         } else {
           console.warn("Cannot listen to announce snapshots because local announce document not found", {announcePath})
         }

@@ -157,6 +157,8 @@ export class FirestoreProvider extends Observable<any> {
 
   private updateHandler: (update: Uint8Array, origin: any) => void;
   private destroyHandler: () => void;
+  private eventHandlers: any;
+  private transactionHandler: (trns: Y.Transaction, ydc: Y.Doc) => void;
   private updateMap = new Map<string, UpdateWithTimestamp>();
   private isStopped = false;
 
@@ -166,12 +168,18 @@ export class FirestoreProvider extends Observable<any> {
     firebaseApp: FirebaseApp,
     ydoc: Y.Doc,
     path: string[],
+    eventHandlers: {
+      onRemoteChange: () => {},
+      onUpdateStart: () => {},
+      onUpdateEnd: () => {},
+    },
     config?: FirestoreProviderConfig
   ) {
     super();
     this.firebaseApp = firebaseApp;
     this.basePath = path.join("/");
     this.doc = ydoc;
+    this.eventHandlers = eventHandlers;
 
     this.maxUpdatePause =
       config?.maxUpdatePause === undefined ? 600 : config.maxUpdatePause;
@@ -235,9 +243,20 @@ export class FirestoreProvider extends Observable<any> {
 
     this.destroyHandler = () => this.destroy();
 
+    this.transactionHandler = (trns, ydc) => {
+      // console.log(trns);
+      if (!trns.local) {
+        // console.log('remote change coming in...');
+        eventHandlers.onRemoteChange();
+      } else if (trns.changed.size) {
+        eventHandlers.onUpdateStart();
+      }
+    };
+
     // Subscribe to the ydoc's update and destroy events
     ydoc.on("update", this.updateHandler);
     ydoc.on("destroy", this.destroyHandler);
+    ydoc.on('afterTransaction', this.transactionHandler);
 
     // Start a listener for document updates
     const collectionPath = path.join("/") + YJS_HISTORY_UPDATES;
@@ -253,6 +272,7 @@ export class FirestoreProvider extends Observable<any> {
         if (baseDoc.exists()) {
           const bytes = baseDoc.data().update as Bytes;
           const update = bytes.toUint8Array();
+          //* self here helps determine if the update is coming from us, or another party.
           Y.applyUpdate(ydoc, update, self);
         }
       })
@@ -468,10 +488,14 @@ export class FirestoreProvider extends Observable<any> {
       const fullDocRef = doc(db, this.basePath);
       batch.set(docRef, data);
       const fullDoc = yDocToProsemirrorJSON(this.doc, 'default');
+      // console.log('*** from provider ***');
+      // console.log(fullDoc);
       batch.update(fullDocRef, {
         content: JSON.stringify(fullDoc),
+        hasYjs: true, // flag to let editor know if content needs to be initialized with old data.
       });
       await batch.commit();
+      this.eventHandlers.onUpdateEnd();
     }
   }
 }
