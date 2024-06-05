@@ -19,7 +19,7 @@ export declare class FirestoreWebrtcConn implements IWebrtcConn {
      */
     private signals;
     private connectionTimeoutId;
-    constructor(signalingConn: FirestoreSignalingConn, initiator: boolean, remotePeerId: string, room: Room);
+    constructor(signalingConn: FirestoreSignalingConn, initiator: boolean, remotePeerId: string, room: Room, fromAnnounce: boolean);
     abort(): void;
     handleUnresponsivePeer(): Promise<void>;
     /**
@@ -121,7 +121,7 @@ export declare class FirestoreSignalingConn {
     private subscribeAnnounce;
     subscribeSignal(): Unsubscribe;
     private decrypt;
-    publishAnnounce(): Promise<void>;
+    publishAnnounce(fromRemove?: boolean): Promise<void>;
     getAnnouncePath(): string;
     deleteAnnounceDoc(): Promise<void>;
     private encodeData;

@@ -68,8 +68,9 @@ export declare class FirestoreProvider extends Observable<any> {
         onRemoteChange: () => {};
         onUpdateStart: () => {};
         onUpdateEnd: () => {};
+        onInitialized: () => {};
     }, config?: FirestoreProviderConfig);
-    destroy(): void;
+    destroy(withoutSave?: boolean): void;
     /**
      * Destroy this provider, and permanently delete the
      * Yjs data

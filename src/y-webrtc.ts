@@ -168,7 +168,7 @@ export class FirestoreWebrtcConn implements IWebrtcConn {
   private signals: string[] | undefined = [];
   private connectionTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
-  constructor (signalingConn: FirestoreSignalingConn, initiator: boolean, remotePeerId: string, room: Room) {
+  constructor (signalingConn: FirestoreSignalingConn, initiator: boolean, remotePeerId: string, room: Room, fromAnnounce: boolean) {
     this.room = room
     this.remotePeerId = remotePeerId
     this.closed = false
@@ -176,10 +176,10 @@ export class FirestoreWebrtcConn implements IWebrtcConn {
     this.synced = false
     this.peer = new SimplePeer({ initiator, ...room.provider.peerOpts });
     this.peer.on('signal', (signal: any) => {
-      signalingConn.publishSignal(remotePeerId, signal);
+      signalingConn.publishSignal(this.remotePeerId, signal);
     })
     this.peer.on('connect', () => {
-      log('connected to ', logging.BOLD, remotePeerId)
+      log('connected to ', logging.BOLD, this.remotePeerId)
       this.connected = true;
       if (this.connectionTimeoutId) {
         clearTimeout(this.connectionTimeoutId);
@@ -191,7 +191,7 @@ export class FirestoreWebrtcConn implements IWebrtcConn {
       // send sync step 1
       // const provider = room.provider
       // const doc = provider.doc
-      const awareness = room.awareness
+      const awareness = this.room.awareness
       // const encoder = encoding.createEncoder()
       // encoding.writeVarUint(encoder, messageSync)
       // syncProtocol.writeSyncStep1(encoder, doc)
@@ -218,11 +218,11 @@ export class FirestoreWebrtcConn implements IWebrtcConn {
       }
       checkIsSynced(room)
       this.peer.destroy()
-      console.log(`closed connection to ${remotePeerId}: ${new Date().toUTCString()}` )
-      log('closed connection to ', logging.BOLD, remotePeerId)
+      console.log(`closed connection to ${this.remotePeerId}: ${new Date().toUTCString()}` )
+      log('closed connection to ', logging.BOLD, this.remotePeerId)
     })
     this.peer.on('error', err => {
-      console.warn(`Error in connection to ${this.room.name}, remotePeerId=${remotePeerId}`, {
+      console.warn(`Error in connection to ${this.room.name}, remotePeerId=${this.remotePeerId}`, {
         err,
         time: new Date().toUTCString()
       });
@@ -235,7 +235,9 @@ export class FirestoreWebrtcConn implements IWebrtcConn {
     })
 
     const self = this;
-    this.connectionTimeoutId = setTimeout(() => self.abort(), CONNECTION_TIMEOUT)
+    if (!fromAnnounce) {
+      this.connectionTimeoutId = setTimeout(() => self.abort(), CONNECTION_TIMEOUT);
+    }
   }
 
   abort() {
@@ -494,6 +496,7 @@ export class Room {
     this.awareness.on('update', this._awarenessUpdateHandler)
     const signalingConn = this.provider.signalingConn;
     if (signalingConn) {
+      // console.log('from connect... ');
       signalingConn.publishAnnounce();
     }
     // signal through all available signaling connections
@@ -529,6 +532,7 @@ export class Room {
     
     const signalingConn = this.provider.signalingConn;
     if (signalingConn) {
+      // console.log('room disconnecting.');
       signalingConn.deleteAnnounceDoc();
     }
 
@@ -681,6 +685,7 @@ const ANNOUNCE_INTERVAL = 23*60*60*1000; // 23 hours
 interface AnnounceData {
   from: string;
   createdAt: Timestamp;
+  fromRemove?: boolean;
 }
 
 export class FirestoreSignalingConn {
@@ -704,6 +709,7 @@ export class FirestoreSignalingConn {
     }
 
     destroy() {
+      // console.log('destroying...');
       this.deleteAnnounceDoc();
       if (this.announceUnsubscribe) {
         this.announceUnsubscribe();
@@ -757,7 +763,7 @@ export class FirestoreSignalingConn {
           const envelope = change.doc.data();
           const payload = envelope.payload;
           const data = await this.decrypt(payload) as AnnounceData;
-
+          // console.log('change from: ', data.from);
           switch (change.type) {
             case 'modified' :
               // falls through
@@ -775,7 +781,11 @@ export class FirestoreSignalingConn {
                   if (remoteCreatedAt) {
                     const remoteMillis = remoteCreatedAt.toMillis();
                     const initiator = this.announceCreatedAt > remoteMillis;
-                    webrtcConns.set(data.from, new FirestoreWebrtcConn(this, initiator, data.from, room))
+                    if (data.fromRemove) {
+                      webrtcConns.set(data.from, new FirestoreWebrtcConn(this, initiator, data.from, room, true));
+                    } else {
+                      webrtcConns.set(data.from, new FirestoreWebrtcConn(this, initiator, data.from, room, false));
+                    }
                   }
                 }
               }
@@ -786,7 +796,7 @@ export class FirestoreSignalingConn {
                 // Another peer must have determined that the current peer is offline.  Perhaps the
                 // current peer really was offline temporarily, but clearly it is back online so
                 // recreate the `announce` document.
-                this.publishAnnounce();
+                this.publishAnnounce(true);
               }
               break;
           }
@@ -794,22 +804,22 @@ export class FirestoreSignalingConn {
           
         }) 
         
-        if (!this.announceCreatedAt) {
-          console.warn("Ignoring remote announce documents because the local `announceCreatedAt` time is not defined.");
-        } else {
-          const webrtcConns = room.webrtcConns;
-          for (const data of queue) {
-            if (
-              webrtcConns.size < room.provider.maxConns && 
-              !webrtcConns.has(data.from)
-            ) {
-              const remoteCreatedAt = data.createdAt as Timestamp;
-              const remoteMillis = remoteCreatedAt.toMillis();
-              const initiator = this.announceCreatedAt > remoteMillis;
-              webrtcConns.set(data.from, new FirestoreWebrtcConn(this, initiator, data.from, room))
-            }
-          }
-        }
+        // if (!this.announceCreatedAt) {
+        //   console.warn("Ignoring remote announce documents because the local `announceCreatedAt` time is not defined.");
+        // } else {
+        //   const webrtcConns = room.webrtcConns;
+        //   for (const data of queue) {
+        //     if (
+        //       webrtcConns.size < room.provider.maxConns && 
+        //       !webrtcConns.has(data.from)
+        //     ) {
+        //       const remoteCreatedAt = data.createdAt as Timestamp;
+        //       const remoteMillis = remoteCreatedAt.toMillis();
+        //       const initiator = this.announceCreatedAt > remoteMillis;
+        //       webrtcConns.set(data.from, new FirestoreWebrtcConn(this, initiator, data.from, room, false))
+        //     }
+        //   }
+        // }
       })
 
     }
@@ -836,7 +846,7 @@ export class FirestoreSignalingConn {
                 map.setIfUndefined(
                   webrtcConns, 
                   data.from, 
-                  () => new FirestoreWebrtcConn(this, false, data.from, room)
+                  () => new FirestoreWebrtcConn(this, false, data.from, room, false)
                 ).peer.signal(data.signal);
                 await deleteDoc(document.ref);
               }
@@ -858,40 +868,50 @@ export class FirestoreSignalingConn {
       )
     }
 
-    async publishAnnounce() {
-
+    async publishAnnounce(fromRemove: boolean = false) {
       if (this.announceIntervalToken) {
         clearInterval(this.announceIntervalToken);
         this.announceIntervalToken = null;
       }
 
       const room = this.room;
-      const data = { from: room.peerId, createdAt: serverTimestamp() }
+      const data: {[k: string]: any} = { from: room.peerId, createdAt: serverTimestamp() };
+      if (fromRemove) {
+        data.fromRemove = true;
+      } else {
+        data.fromRemove = false;
+      }
+      // console.log('publishing announce...');
+      // console.log(data);
 
       const announcePath = this.getAnnouncePath();
       const announceRef = await this.save(announcePath, data);
       if (announceRef) {
-
         const self = this;
-        this.announceIntervalToken = setInterval(() => {
-          // Update the `expiresAt` timestamp
-          self.save(announcePath, data);
-        }, ANNOUNCE_INTERVAL);
-
-        const announceDoc = await getDoc(announceRef);
-        if (announceDoc.exists()) {
-          const announceData = announceDoc.data();
-          const payload = await this.decrypt(announceData.payload) as AnnounceData;
-          try {
-            this.announceCreatedAt = payload.createdAt.toMillis();
-            this.announceUnsubscribe = this.subscribeAnnounce();
-          } catch (e) {
-            console.log('Failed to get createdAt');
-            console.error(e);
+        setTimeout(async () => {
+          self.announceIntervalToken = setInterval(() => {
+            // Update the `expiresAt` timestamp
+            self.save(announcePath, data);
+          }, ANNOUNCE_INTERVAL);
+  
+          const announceDoc = await getDoc(announceRef);
+          if (announceDoc.exists()) {
+            const announceData = announceDoc.data();
+            // const announceData = announceDoc.data();
+            const payload = await self.decrypt(announceData.payload) as AnnounceData;
+            // console.log(payload);
+            try {
+              self.announceCreatedAt = payload.createdAt.toMillis();
+              self.announceUnsubscribe = self.subscribeAnnounce();
+            } catch (e) {
+              // swallow this error.
+              console.log('Failed to get createdAt');
+              console.error(e);
+            }
+          } else {
+            console.warn("Cannot listen to announce snapshots because local announce document not found", {announcePath})
           }
-        } else {
-          console.warn("Cannot listen to announce snapshots because local announce document not found", {announcePath})
-        }
+        }, 2000);
       }
     }
 
@@ -901,6 +921,7 @@ export class FirestoreSignalingConn {
 
     async deleteAnnounceDoc() {
       const announcePath = this.getAnnouncePath();
+      // console.log('deleting announce doc', announcePath);
       const db = getFirestore(this.firebaseApp);
       const ref = doc(db, announcePath);
       await deleteDoc(ref);

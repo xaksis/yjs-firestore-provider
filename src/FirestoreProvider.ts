@@ -172,6 +172,7 @@ export class FirestoreProvider extends Observable<any> {
       onRemoteChange: () => {},
       onUpdateStart: () => {},
       onUpdateEnd: () => {},
+      onInitialized: () => {},
     },
     config?: FirestoreProviderConfig
   ) {
@@ -275,6 +276,7 @@ export class FirestoreProvider extends Observable<any> {
           //* self here helps determine if the update is coming from us, or another party.
           Y.applyUpdate(ydoc, update, self);
         }
+        eventHandlers.onInitialized();
       })
       .then(() => {
         //* here we're subscribing to updates collection within history. yjs/history/updates.
@@ -337,9 +339,11 @@ export class FirestoreProvider extends Observable<any> {
       });
   }
 
-  destroy() {
+  destroy(withoutSave = false) {
     console.log("destory FirestoreProvider");
-    this.save();
+    if (!withoutSave) {
+      this.save();
+    }
     if (this.webrtcProvider) {
       this.webrtcProvider.destroy();
       this.webrtcProvider = null;
@@ -430,6 +434,8 @@ export class FirestoreProvider extends Observable<any> {
       this.isStopped = true;
       this.doc.off("update", this.updateHandler);
       this.doc.off("destroy", this.destroyHandler);
+      this.doc.off("afterTransaction", this.transactionHandler);
+
 
       if (this.compressIntervalId) {
         clearInterval(this.compressIntervalId);
